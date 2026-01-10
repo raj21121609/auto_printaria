@@ -1,0 +1,6 @@
+{
+    "backend_url": "http://localhost:8000",
+    "shop_id": "your_shop_id_here",
+    "auth_token": "your_auth_token_here",
+    "poll_interval": 30
+}
