@@ -1,5 +1,5 @@
 from fastapi import FastAPI
-from app.api.routes import whatsapp, webhooks
+from app.api.routes import whatsapp, webhooks, print_jobs
 from app.core.config import get_settings
 from app.core.database import engine, Base
 import logging
@@ -15,6 +15,7 @@ app = FastAPI(title=settings.PROJECT_NAME)
 # Include Routers
 app.include_router(whatsapp.router, prefix="/webhooks/whatsapp", tags=["WhatsApp"])
 app.include_router(webhooks.router, prefix="/api/webhooks", tags=["Webhooks"])
+app.include_router(print_jobs.router, prefix="/api/v1/print_jobs", tags=["Print Jobs"])
 
 @app.on_event("startup")
 async def startup_event():
