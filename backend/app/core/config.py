@@ -1,5 +1,10 @@
 from pydantic_settings import BaseSettings
 from functools import lru_cache
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
+
 
 class Settings(BaseSettings):
     API_V1_STR: str = "/api/v1"

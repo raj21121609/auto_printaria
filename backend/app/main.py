@@ -19,6 +19,13 @@ app.include_router(webhooks.router, prefix="/api/webhooks", tags=["Webhooks"])
 @app.on_event("startup")
 async def startup_event():
     logger.info("Starting up Printaria Backend...")
+    
+    # Safe logging of DATABASE_URL
+    db_url = settings.DATABASE_URL
+    if db_url:
+        safe_url = db_url.split("@")[-1] if "@" in db_url else "********"
+        logger.info(f"Using DATABASE_URL: ...@{safe_url}")
+
     # Create Tables
     async with engine.begin() as conn:
         # await conn.run_sync(Base.metadata.drop_all) # Uncomment to reset DB
