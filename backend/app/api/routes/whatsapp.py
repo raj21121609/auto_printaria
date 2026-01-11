@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Request, Depends, HTTPException, BackgroundTasks, Query, Response
 from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
@@ -13,139 +13,118 @@ router = APIRouter()
 settings = get_settings()
 logger = logging.getLogger(__name__)
 
-@router.get("/webhook")
-async def verify_whatsapp(request: Request):
+@router.get("")
+async def verify_whatsapp(
+    mode: str = Query(alias="hub.mode"),
+    token: str = Query(alias="hub.verify_token"),
+    challenge: str = Query(alias="hub.challenge")
+):
     """
     Verification endpoint for WhatsApp Webhook.
     """
-    token = request.query_params.get("hub.verify_token")
-    challenge = request.query_params.get("hub.challenge")
+    # Debug logging for verification
+    expected_token = settings.VERIFY_TOKEN
+    logger.info(f"WhatsApp Verification Request: mode={mode}, token={token}, expected={expected_token}")
+
+    if mode == "subscribe" and token == expected_token:
+        # Return raw challenge value as text/plain, NOT JSON
+        return Response(content=challenge, media_type="text/plain")
     
-    if token == settings.VERIFY_TOKEN:
-        return int(challenge)
     raise HTTPException(status_code=403, detail="Verification failed")
 
-@router.post("/webhook")
+@router.post("")
 async def handle_whatsapp_message(request: Request, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db)):
     """
-    Handle incoming WhatsApp messages.
+    Handle incoming WhatsApp messages and status updates.
     """
     try:
         body = await request.json()
-        logger.info(f"Received WhatsApp webhook: {json.dumps(body)}")
+        # Log the full body for debugging (can be removed in production)
+        # logger.info(f"Received WhatsApp webhook: {json.dumps(body)}")
         
         entry = body.get("entry", [])
         if not entry:
             return {"status": "ok"}
             
-        changes = entry[0].get("changes", [])
-        if not changes:
-            return {"status": "ok"}
-            
-        value = changes[0].get("value", {})
-        messages = value.get("messages", [])
-        
-        if not messages:
-            return {"status": "ok"}
-            
-        message = messages[0]
-        from_number = message.get("from")
-        msg_type = message.get("type")
-        
-        # Simple State Machine using DB Integration
-        # Check for active PENDING order
-        result = await db.execute(
-            select(Order).where(
-                Order.customer_phone == from_number,
-                Order.payment_status == PaymentStatus.PENDING,
-                Order.print_status == "PENDING"
-            ).order_by(Order.created_at.desc())
-        )
-        current_order = result.scalars().first()
-        
+        for changed_entry in entry:
+            changes = changed_entry.get("changes", [])
+            for change in changes:
+                value = change.get("value", {})
+                
+                # 1. Handle Status Updates (sent, delivered, read)
+                if "statuses" in value:
+                    statuses = value["statuses"]
+                    for status in statuses:
+                        status_id = status.get("id")
+                        status_state = status.get("status")
+                        recipient_id = status.get("recipient_id")
+                        timestamp = status.get("timestamp")
+                        
+                        logger.info(f"[WhatsApp Status] ID: {status_id} | Recipient: {recipient_id} | Status: {status_state}")
+                        # Future: Update message status in DB if needed
+                        
+                # 2. Handle Incoming Messages
+                elif "messages" in value:
+                    messages = value["messages"]
+                    for message in messages:
+                        from_number = message.get("from")
+                        msg_type = message.get("type")
+                        msg_id = message.get("id")
+                        
+                        logger.info(f"[WhatsApp Message] From: {from_number} | Type: {msg_type} | ID: {msg_id}")
+                        
+                        # --- Existing Business Logic (Print Flow) ---
+                        # Check for active PENDING order
+                        result = await db.execute(
+                            select(Order).where(
+                                Order.customer_phone == from_number,
+                                Order.payment_status == PaymentStatus.PENDING,
+                                Order.print_status == "PENDING"
+                            ).order_by(Order.created_at.desc())
+                        )
+                        current_order = result.scalars().first()
+                        
         if msg_type == "text":
             text_body = message["text"]["body"].strip().lower()
+            logger.info(f"Text Content: {text_body}")
             
             if text_body == "print":
-                # Start new order flow
+                logger.info(f"Print intent detected from {from_number}")
+                
+                # Start new order flow or reset existing incomplete one
                 if not current_order:
-                    new_order = Order(customer_phone=from_number)
+                    # file_url is non-nullable, using placeholder
+                    new_order = Order(
+                        customer_phone=from_number,
+                        file_url="WAITING_FOR_UPLOAD",
+                        print_status="WAITING_FILE" 
+                    )
                     db.add(new_order)
                     await db.commit()
-                    await send_whatsapp_message(from_number, "Hi! Welcome to Printaria. Please upload the document (PDF/Image) you want to print.")
+                    logger.info(f"Created new order {new_order.id} with status WAITING_FILE")
                 else:
-                    await send_whatsapp_message(from_number, "You have a pending order. Please upload the file or enter the number of copies if file is already uploaded.")
-            
-            elif current_order and current_order.file_url:
-                # Expecting number of copies
-                if text_body.isdigit():
-                    copies = int(text_body)
-                    current_order.copies = copies
-                    
-                    # Generate Price (e.g., 5 INR per copy)
-                    amount = copies * 5
-                    
-                    # Generate Link
-                    short_url, link_id = create_payment_link(amount, current_order.id, f"Printing {copies} copies")
-                    
-                    current_order.razorpay_payment_link_id = link_id
+                    # Update existing pending order to restart flow if needed
+                    current_order.print_status = "WAITING_FILE"
+                    current_order.file_url = "WAITING_FOR_UPLOAD" # Reset file if they say print again
                     await db.commit()
-                    
-                    await send_whatsapp_message(from_number, f"Order created for {copies} copies. Total: ₹{amount}.\nPlease pay here to start printing: {short_url}")
-                else:
-                    await send_whatsapp_message(from_number, "Please enter a valid number for copies.")
+                    logger.info(f"Updated existing order {current_order.id} to status WAITING_FILE")
+
+                await send_whatsapp_message(from_number, "🖨️ Welcome to Printaria! Please upload the document you want to print.")
+            
             else:
-                 await send_whatsapp_message(from_number, "Type 'print' to start. If you started, please upload a file first.")
+                 logger.info(f"Ignored non-print text message: {text_body}")
+                 # Strictly ignoring other text for now as per requirements
+                 pass
 
         elif msg_type == "document" or msg_type == "image":
-            # Handle file upload
-            if msg_type == "document":
-                 file_id = message["document"]["id"]
-                 # In a real app, you'd fetch the media URL using the ID. 
-                 # For now, we assume direct URL if available or use a placeholder/mock logic as getting media URL requires another API call.
-                 # WhatsApp sends a media ID, we need to get the URL.
-                 # For simplicity in this demo, we will warn or assume some mock behavior if we can't fetch.
-                 # However, the user wants a production backend.
-                 # We'll assume we can use the ID or logic to fetch it.
-                 # But standard logic: GET /v17.0/{media_id} -> returns URL -> GET URL (with Auth).
-                 
-                 # IMPORTANT: For this task, getting the actual media URL is complex without a valid token.
-                 # We will store the Media ID and mock the URL fetch or implement a media fetcher helper if needed.
-                 # Let's assume we store the ID as the URL for now, or fetch it.
-                 
-                 # For robustness, let's just create the order if needed and ask for copies.
-                 pass
-            
-            # Since fetching media URL properly requires a separate call, 
-            # we'll simplify and say "File received".
-            # In a real scenario, we would `requests.get(url_from_media_id)`.
-            
-            if not current_order:
-                 new_order = Order(customer_phone=from_number)
-                 db.add(new_order)
-                 current_order = new_order
-            
-            # Mocking the URL for the demo if real extraction is too complex for one file
-            # But we should try to support it conceptually.
-            # `file_url` will temporarily hold the Media ID for the printer service to resolve, 
-            # OR we resolve it now. 
-            # Let's just create a mock URL based on ID for the printer to "fail" or "mock print" later if it's not a real public URL.
-            # But wait, WhatsApp media URLs require Auth headers to download. 
-            # The printer service `download_file` uses simple GET. 
-            # I should update printer service or handle it here? 
-            # I will store "whatsapp_media:<ID>" and handle logic in printer service? 
-            # Or simplified: User sends a link?
-            # User instructions "Bot asks for file upload". This implies native upload.
-            
-            # We will store the ID.
-            media_id = message[msg_type]["id"]
-            current_order.file_url = f"https://graph.facebook.com/v17.0/{media_id}" # Simplified
-             
-            await db.commit()
-            await send_whatsapp_message(from_number, "File received! How many copies do you want? (Reply with a number, e.g., 2)")
+            # Handle file upload (Not implemented yet)
+            logger.info(f"Received media {msg_type} from {from_number} but upload handling is skipped.")
+            pass
 
+        # Always return 200 OK
         return {"status": "ok"}
             
     except Exception as e:
         logger.error(f"Error handling WhatsApp webhook: {e}")
-        return {"status": "error"}
+        # Always return ok to prevent retries loop on error, assuming logged
+        return {"status": "ok"}

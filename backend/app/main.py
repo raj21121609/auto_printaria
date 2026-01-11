@@ -13,7 +13,7 @@ settings = get_settings()
 app = FastAPI(title=settings.PROJECT_NAME)
 
 # Include Routers
-app.include_router(whatsapp.router, prefix="/api/whatsapp", tags=["WhatsApp"])
+app.include_router(whatsapp.router, prefix="/webhooks/whatsapp", tags=["WhatsApp"])
 app.include_router(webhooks.router, prefix="/api/webhooks", tags=["Webhooks"])
 
 @app.on_event("startup")
