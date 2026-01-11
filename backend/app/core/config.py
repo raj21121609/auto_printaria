@@ -25,10 +25,10 @@ class Settings(BaseSettings):
     RAZORPAY_KEY_SECRET: str
     RAZORPAY_WEBHOOK_SECRET: str
     
-    # WhatsApp
-    WHATSAPP_TOKEN: str
-    PHONE_NUMBER_ID: str
-    VERIFY_TOKEN: str
+    # Gupshup
+    GUPSHUP_API_KEY: str
+    GUPSHUP_APP_NAME: str
+    GUPSHUP_WHATSAPP_NUMBER: str
     
     # Printer
     PRINTER_NAME: str = "Default_Printer"

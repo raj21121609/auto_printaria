@@ -44,6 +44,10 @@ class Order(Base):
     copies = Column(Integer, nullable=False, default=1)
     amount = Column(Numeric(10, 2), nullable=False)
     
+    # Missing fields restored for webhook compatibility
+    razorpay_payment_link_id = Column(String(255), unique=True, index=True)
+    razorpay_order_id = Column(String(255), index=True)
+
     order_status = Column(Enum(OrderStatus), nullable=False, default=OrderStatus.CREATED)
     
     shop_id = Column(UUID(as_uuid=True), ForeignKey("shops.id", ondelete="SET NULL"))
