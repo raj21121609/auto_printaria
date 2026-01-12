@@ -1,2 +1,11 @@
-requests
-redis
+# AMP K Print Worker Dependencies
+
+# HTTP client for backend communication
+requests>=2.28.0
+
+# Redis client for queue consumption
+redis>=4.5.0
+
+# Optional: Windows printing API (for advanced print control)
+# Uncomment if you want to use win32print
+# pywin32>=305
