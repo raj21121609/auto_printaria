@@ -1,4 +1,4 @@
-# AMP K - WhatsApp Automated Print System
+#  - WhatsApp Automated Print System
 
 Production-grade WhatsApp-based print ordering system with automated printing on a local Windows PC.
 
